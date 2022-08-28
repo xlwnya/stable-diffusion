@@ -32,6 +32,9 @@ from ldm.util import instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
 
+# include changes from "prompt correction patch for Stable Diffusion txt2.img.py"
+# https://gist.github.com/td2sk/33044aabd8cc080137bceb3f87f650ef
+
 def chunk(it, size):
     it = iter(it)
     return iter(lambda: tuple(islice(it, size)), ())
@@ -200,6 +203,10 @@ def main():
         choices=["full", "autocast"],
         default="autocast"
     )
+    parser.add_argument(
+        '--prompt-correction',
+        action='append',
+    )
     opt = parser.parse_args()
 
     if opt.laion400m:
@@ -212,6 +219,8 @@ def main():
 
     config = OmegaConf.load(f"{opt.config}")
     model = load_model_from_config(config, f"{opt.ckpt}")
+    # use float16 model (for VRAM 8GB environment)
+    #model = model.to(torch.float16)
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = model.to(device)
@@ -250,7 +259,7 @@ def main():
     if opt.fixed_code:
         start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=device)
 
-    precision_scope = autocast if opt.precision=="autocast" else nullcontext
+    precision_scope = autocast if opt.precision == "autocast" else nullcontext
     with torch.no_grad():
         with precision_scope("cuda"):
             with model.ema_scope():
@@ -264,6 +273,13 @@ def main():
                         if isinstance(prompts, tuple):
                             prompts = list(prompts)
                         c = model.get_learned_conditioning(prompts)
+
+                        # prompt_correction
+                        for pw in opt.prompt_correction:
+                            pw = pw.split('::')
+                            p, weight = pw[:-1], float(pw[-1])
+                            c += weight * model.get_learned_conditioning(list(p))
+                        
                         shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
                         samples_ddim, _ = sampler.sample(S=opt.ddim_steps,
                                                          conditioning=c,
