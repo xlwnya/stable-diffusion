@@ -1,0 +1,5 @@
+/.idea
+/outputs
+/latent_diffusion.egg-info
+__pycache__
+models/ldm/stable-diffusion-v1
