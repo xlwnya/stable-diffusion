@@ -149,11 +149,25 @@ class FrozenCLIPEmbedder(AbstractEncoder):
         for param in self.parameters():
             param.requires_grad = False
 
+    def decode_token_matrix(self, token):
+        if isinstance(token, (list, tuple)):
+            decoded = []
+            for t in token:
+                decoded.append(self.decode_token_matrix(t))
+            return decoded
+        else:
+            return self.tokenizer.decoder.get(token)
+
     def forward(self, text):
         batch_encoding = self.tokenizer(text, truncation=True, max_length=self.max_length, return_length=True,
-                                        return_overflowing_tokens=False, padding="max_length", return_tensors="pt")
+                                        return_overflowing_tokens=True, padding="max_length", return_tensors="pt")
         tokens = batch_encoding["input_ids"].to(self.device)
         outputs = self.transformer(input_ids=tokens)
+
+        if hasattr(batch_encoding, "overflowing_tokens"):
+            if batch_encoding.overflowing_tokens.size()[-1] > 0:
+                of_tokens = self.decode_token_matrix(batch_encoding.overflowing_tokens.tolist())
+                print(f"\nWarning: some tokens truncated: {of_tokens}")
 
         z = outputs.last_hidden_state
         return z
