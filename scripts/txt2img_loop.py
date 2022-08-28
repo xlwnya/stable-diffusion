@@ -1,4 +1,5 @@
 import argparse, os, sys, glob
+import re
 import cv2
 import torch
 
@@ -207,6 +208,10 @@ def main():
         '--prompt-correction',
         action='append',
     )
+    parser.add_argument(
+        "--prompt-correction-normalize",
+        action='store_true',
+    )
     opt = parser.parse_args()
 
     if opt.laion400m:
@@ -233,7 +238,13 @@ def main():
     else:
         sampler = DDIMSampler(model)
 
-    outpath = os.path.join(opt.outdir, f"loop_{opt.W}x{opt.H}_{opt.seed}_"+"_".join(opt.prompt.split()))[:150]
+    promptinfo = opt.prompt
+    if opt.prompt_correction:
+        promptinfo += "_" + "_".join(opt.prompt_correction)
+    if opt.prompt_correction_normalize:
+        promptinfo += "_norm"
+    pathprompt = re.sub(r'[\\/:<>*?"|]', "", promptinfo)
+    outpath = os.path.join(opt.outdir, f"loop_{opt.W}x{opt.H}_{opt.seed}_"+"_".join(pathprompt.split()))[:150]
 
     os.makedirs(outpath, exist_ok=True)
 
@@ -268,6 +279,7 @@ def main():
                 for n in trange(opt.n_iter, desc="Sampling"):
                     for prompts in tqdm(data, desc="data"):
                         uc = None
+                        total_weight = 1.0
                         if opt.scale != 1.0:
                             uc = model.get_learned_conditioning(batch_size * [""])
                         if isinstance(prompts, tuple):
@@ -275,11 +287,17 @@ def main():
                         c = model.get_learned_conditioning(prompts)
 
                         # prompt_correction
-                        for pw in opt.prompt_correction:
-                            pw = pw.split('::')
-                            p, weight = pw[:-1], float(pw[-1])
-                            c += weight * model.get_learned_conditioning(list(p))
-                        
+                        if opt.prompt_correction:
+                            for pw in opt.prompt_correction:
+                                pw = pw.split('::')
+                                p, weight = pw[:-1], float(pw[-1])
+                                total_weight += weight
+                                c += weight * model.get_learned_conditioning(list(p))
+
+                        # normalize(simple)
+                        if opt.prompt_correction_normalize:
+                            c = c / total_weight
+
                         shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
                         samples_ddim, _ = sampler.sample(S=opt.ddim_steps,
                                                          conditioning=c,
