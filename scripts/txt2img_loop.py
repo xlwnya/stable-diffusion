@@ -198,6 +198,19 @@ def main():
         help="the seed (for reproducible sampling)",
     )
     parser.add_argument(
+        "--random-seed",
+        action='store_true',
+    )
+    parser.add_argument(
+        "--indexed-samples-dir",
+        action='store_true',
+    )
+    parser.add_argument(
+        "--outpath-maxlen",
+        type=int,
+        default=100,
+    )
+    parser.add_argument(
         "--precision",
         type=str,
         help="evaluate at this precision",
@@ -220,7 +233,10 @@ def main():
         opt.ckpt = "models/ldm/text2img-large/model.ckpt"
         opt.outdir = "outputs/txt2img-samples-laion400m"
 
-    seed_everything(opt.seed)
+    seed = opt.seed
+    if opt.random_seed:
+        seed = None
+    seed = seed_everything(seed)
 
     config = OmegaConf.load(f"{opt.config}")
     model = load_model_from_config(config, f"{opt.ckpt}")
@@ -243,8 +259,8 @@ def main():
         promptinfo += "_" + "_".join(opt.prompt_correction)
     if opt.prompt_correction_normalize:
         promptinfo += "_norm"
-    pathprompt = re.sub(r'[\\/:<>*?"|]', "", promptinfo)
-    outpath = os.path.join(opt.outdir, f"loop_{opt.W}x{opt.H}_{opt.seed}_"+"_".join(pathprompt.split()))[:150]
+    pathprompt = re.sub(r'[\\/:<>*?"|,]', "", promptinfo)
+    outpath = os.path.join(opt.outdir, f'loop_{opt.W}x{opt.H}_'+"_".join(pathprompt.split()))[:opt.outpath_maxlen]
 
     os.makedirs(outpath, exist_ok=True)
 
@@ -261,10 +277,31 @@ def main():
             data = f.read().splitlines()
             data = list(chunk(data, batch_size))
 
-    sample_path = os.path.join(outpath, "samples")
+    grid_png_count = len([f for f in os.listdir(outpath) if re.fullmatch(r'grid-.*.png', f)])
+    grid_info_count = len([f for f in os.listdir(outpath) if re.fullmatch(r'grid-.*_info.txt', f)])
+    grid_count = max(grid_png_count, grid_info_count)
+
+    samples_dir_name = "samples"
+    if opt.indexed_samples_dir:
+        samples_dir_name = f'samples-{grid_count:04}'
+
+    sample_path = os.path.join(outpath, samples_dir_name)
     os.makedirs(sample_path, exist_ok=True)
     base_count = len(os.listdir(sample_path))
-    grid_count = len(os.listdir(outpath)) - 1
+
+    grid_info_path = f'grid-{grid_count:04}_s{seed}_info.txt'
+    with open(os.path.join(outpath, grid_info_path), mode='a') as f:
+        f.write("loop version.\n")
+        f.write(f"argv: {sys.argv}\n")
+        f.write(f"opt: {opt}\n")
+        f.write(f"seed: {seed}\n")
+        f.write(f"samples_start: {base_count:05}.png\n")
+        f.write(f"grid_png: grid-{grid_count:04}.png\n")
+        f.write(f"grid_info: {grid_info_path}\n")
+        argv_param = []
+        for v in sys.argv:
+            argv_param.append(f'"{v}"' if " " in v else v)
+        f.write(f"cmdline:\ntime python {' '.join(argv_param)}\n")
 
     start_code = None
     if opt.fixed_code:
